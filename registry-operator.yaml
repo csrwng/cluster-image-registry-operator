@@ -1,0 +1,143 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    config.openshift.io/inject-proxy: cluster-image-registry-operator
+  name: cluster-image-registry-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: cluster-image-registry-operator
+  template:
+    metadata:
+      labels:
+        name: cluster-image-registry-operator
+    spec:
+      automountServiceAccountToken: false
+      initContainers:
+      - args:
+        - -c
+        - |
+          #!/bin/bash
+          echo "openshift-image-registry" > /var/run/secrets/openshift/serviceaccount/namespace
+          cp /etc/cacert/ca.crt /var/run/secrets/openshift/serviceaccount/ca.crt
+        command:
+        - /bin/bash
+        image: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:76d3dfd77a55ee1fb0580fccd934677b214bbcfac5710ff45705076910964b40
+        imagePullPolicy: IfNotPresent
+        name: bootstrap
+        resources:
+          requests:
+            cpu: 10m
+            memory: 10Mi
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /var/run/secrets/openshift/serviceaccount
+          name: serviceaccount-token
+        - mountPath: /etc/cacert
+          name: ca-cert
+      - args:
+        - --service-account-namespace=openshift-image-registry
+        - --service-account-name=cluster-image-registry-operator
+        - --token-file=/var/run/secrets/openshift/serviceaccount/token
+        - --kubeconfig=/etc/kubeconfig/kubeconfig
+        - --token-audience=https://cewong-dev.s3.us-east-2.amazonaws.com/cewong-guest-6vfr6
+        - --oneshot
+        command:
+        - /usr/bin/control-plane-operator
+        - token-minter
+        image: quay.io/csrwng/hypershift:917c9546
+        imagePullPolicy: IfNotPresent
+        name: token-minter
+        resources:
+          requests:
+            cpu: 10m
+            memory: 10Mi
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /var/run/secrets/openshift/serviceaccount
+          name: serviceaccount-token
+        - mountPath: /etc/kubeconfig
+          name: kubeconfig
+      containers:
+      - args:
+        - --service-account-namespace=openshift-image-registry
+        - --service-account-name=cluster-image-registry-operator
+        - --token-file=/var/run/secrets/openshift/serviceaccount/token
+        - --kubeconfig=/etc/kubeconfig/kubeconfig
+        command:
+        - /usr/bin/control-plane-operator
+        - token-minter
+        image: quay.io/csrwng/hypershift:917c9546
+        imagePullPolicy: IfNotPresent
+        name: webidentity-token-minter
+        resources:
+          requests:
+            cpu: 10m
+            memory: 10Mi
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /var/run/secrets/openshift/serviceaccount
+          name: webidentity-token
+        - mountPath: /etc/kubeconfig
+          name: kubeconfig
+      - args:
+        - -c
+        - |-
+          export KUBERNETES_SERVICE_HOST=kube-apiserver
+          export KUBERNETES_SERVICE_PORT=$KUBE_APISERVER_SERVICE_PORT
+          /usr/bin/cluster-image-registry-operator \
+          --files=/var/run/configmaps/trusted-ca/tls-ca-bundle.pem \
+          --files=/etc/secrets/tls.crt \
+          --files=/etc/secrets/tls.key
+        command:
+        - /bin/bash
+        env:
+        - name: RELEASE_VERSION
+          value: 4.11.0-0.nightly-2022-07-26-154822
+        - name: WATCH_NAMESPACE
+          value: openshift-image-registry
+        - name: OPERATOR_NAME
+          value: cluster-image-registry-operator
+        - name: IMAGE
+          value: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:a9fa30bd99ef1f17481498f233cd188274ea88b832ae172f99e7911dc7b72a14
+        - name: IMAGE_PRUNER
+          value: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:76d3dfd77a55ee1fb0580fccd934677b214bbcfac5710ff45705076910964b40
+        - name: AZURE_ENVIRONMENT_FILEPATH
+          value: /tmp/azurestackcloud.json
+        - name: KUBECONFIG
+          value: /etc/kubeconfig/kubeconfig
+        image: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:22e14ec497d6fc4876d9c22f6dc0294f58e9943154e632d9296393b8386d1a8c
+        imagePullPolicy: IfNotPresent
+        name: cluster-image-registry-operator
+        ports:
+        - containerPort: 60000
+          name: metrics
+        resources:
+          requests:
+            cpu: 10m
+            memory: 50Mi
+        volumeMounts:
+        - mountPath: /etc/kubeconfig
+          name: kubeconfig
+          readOnly: true
+        - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          name: serviceaccount-token
+          readaOnly: true
+        - mountPath: /var/run/secrets/openshift/serviceaccount
+          name: webidentity-token
+      volumes:
+      - name: kubeconfig
+        secret:
+          secretName: service-network-admin-kubeconfig
+      - emptyDir: {}
+        name: serviceaccount-token
+      - emptyDir: {}
+        name: webidentity-token
+      - name: ca-cert
+        secret:
+          secretName: root-ca
